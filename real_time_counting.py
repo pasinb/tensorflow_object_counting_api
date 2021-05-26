@@ -5,7 +5,8 @@
 #----------------------------------------------
 
 # Imports
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 
 # Object detection imports
 from utils import backbone
@@ -26,4 +27,5 @@ is_color_recognition_enabled =  False # set it to true for enabling the color pr
 
 #object_counting_api.targeted_object_counting(input_video, detection_graph, category_index, is_color_recognition_enabled, targeted_objects, fps, width, height) # targeted objects counting
 
-object_counting_api.object_counting(input_video, detection_graph, category_index, is_color_recognition_enabled) # counting all the objects
+# object_counting_api.object_counting(input_video, detection_graph, category_index, is_color_recognition_enabled) # counting all the objects
+object_counting_api.object_counting_webcam(detection_graph, category_index, is_color_recognition_enabled)

@@ -44,7 +44,8 @@ Example usage:
 """
 import functools
 import os
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 
 from object_detection.builders import dataset_builder
 from object_detection.builders import graph_rewriter_builder

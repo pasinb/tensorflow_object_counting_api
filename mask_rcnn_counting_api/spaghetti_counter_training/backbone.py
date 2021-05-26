@@ -14,7 +14,8 @@ import math
 import re
 import time
 import numpy as np
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches

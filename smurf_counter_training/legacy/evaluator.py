@@ -19,7 +19,8 @@ DetectionModel.
 """
 
 import logging
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 
 from object_detection import eval_util
 from object_detection.core import prefetcher

@@ -15,7 +15,8 @@
 
 """Tests for object_detection.trainer."""
 
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 
 from google.protobuf import text_format
 
