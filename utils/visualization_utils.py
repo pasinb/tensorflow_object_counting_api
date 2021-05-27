@@ -763,7 +763,7 @@ def visualize_boxes_and_labels_on_image_array_x_axis(current_frame_number,
                 xmin,
                 ymax,
                 xmax,
-                color=color,
+                color='Aqua',
                 thickness=line_thickness,
                 display_str_list=box_to_display_str_map[box],
                 use_normalized_coordinates=use_normalized_coordinates) 
@@ -772,7 +772,7 @@ def visualize_boxes_and_labels_on_image_array_x_axis(current_frame_number,
               draw_keypoints_on_image_array(
                   image,
                   box_to_keypoints_map[box],
-                  color=color,
+                  color='Aqua',
                   radius=line_thickness / 2,
                   use_normalized_coordinates=use_normalized_coordinates)
 
@@ -786,7 +786,7 @@ def visualize_boxes_and_labels_on_image_array_x_axis(current_frame_number,
                 xmin,
                 ymax,
                 xmax,
-                color=color,
+                color='Aqua',
                 thickness=line_thickness,
                 display_str_list=box_to_display_str_map[box],
                 use_normalized_coordinates=use_normalized_coordinates) 
@@ -795,7 +795,7 @@ def visualize_boxes_and_labels_on_image_array_x_axis(current_frame_number,
               draw_keypoints_on_image_array(
                   image,
                   box_to_keypoints_map[box],
-                  color=color,
+                  color='Aqua',
                   radius=line_thickness / 2,
                   use_normalized_coordinates=use_normalized_coordinates)
 
