@@ -21,32 +21,11 @@ print("CV version: " + cv2.__version__)
 # improve count detection (2 lines?, tracker in out position)
 
 def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is_color_recognition_enabled, roi, deviation, custom_object_name):
-        
-        total_passed_objects = 0              
-
-        # input video
-        # cap = cv2.VideoCapture(input_video)
-
-
-        # fps = int(cap.get(cv2.CAP_PROP_FPS))
-
-        # fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        # output_movie = cv2.VideoWriter('the_output.avi', fourcc, fps, (width, height))
         skip_frame = 0
-
         total_passed_objects = 0
-        # color = "waiting..."
         tracker_id = 1
-        # multi_tracker = cv2.MultiTracker_create()
         trackers = []
-        # tracker_initialized = False
-        # track_bbox = None
-        # track_ok = None
-
-        # if int(minor_ver) < 3:
-        # tracker = cv2.Tracker_create('KCF')
-        # else:
-        #     tracker = cv2.TrackerKCF_create()
+        fps = 0
 
         with detection_graph.as_default():
           with tf.Session(graph=detection_graph) as sess:
@@ -68,6 +47,9 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
 
             # for all the frames that are extracted from input video
             while True:
+                # Start timer
+                timer = cv2.getTickCount()
+
                 ret, frame = cap.read()                
                 if frame is None:
                     continue
@@ -75,43 +57,27 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                     print("end of the video file...")
                     break
                 
-                # Start timer
-                timer = cv2.getTickCount()
+                
                 
                 # Update tracker
-
-                # if tracker_initialized:
                 for i in reversed(range(len(trackers))):
-                    # [tracker, tracker_id, bbox_tuple]
                     track_ok, track_bbox = trackers[i][0].update(frame)
-
                     if track_ok:
-                        # for i, track_bbox in enumerate(track_bboxes):
-                        #     p1 = (int(newbox[0]), int(newbox[1]))
-                        #     p2 = (int(newbox[0] + newbox[2]), int(newbox[1] + newbox[3]))
-                        #     cv2.rectangle(frame, p1, p2, colors[i], 2, 1)
                         # Tracking success
                         (prev_x, prev_y, prev_w, prev_h) = trackers[i][2]
                         (x, y, w, h) = [int(v) for v in track_bbox]
-
                         if abs((x + w/2) - cols/2) < 20 and abs((prev_x + prev_w/2) - cols/2) > 20:
                             if (prev_x + prev_w/2) - cols/2 > 0:
                                 total_passed_objects  = total_passed_objects + 1
                             else:
                                 total_passed_objects  = total_passed_objects - 1
-
-
                         trackers[i][2] = (x, y, w, h)
-
-                        # print(track_bbox)
                         cv2.rectangle(frame, (x, y), (x + w, y + h), (0,255,0), thickness=2)
                         cv2.putText(frame, str(trackers[i][1]), (int(x + w/2) , int(y + h/2)), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 2)
 
                     else:
-                        trackers.pop(i)
                         # Tracking failure
-                        # cv2.putText(frame, "Tracking fail", (100,80), cv2.FONT_HERSHEY_SIMPLEX, 0.75,(0,0,255),2)
-                        # tracker_initialized = False
+                        trackers.pop(i)
                         
                 rows = frame.shape[0]
                 cols = frame.shape[1]
@@ -119,7 +85,6 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
 
                 if skip_frame%10 == 0:
 
-                    # if tracker_initialized is False:
                     # Expand dimensions since the model expects images to have shape: [1, None, None, 3]
                     image_np_expanded = np.expand_dims(frame, axis=0)
 
@@ -128,20 +93,8 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                         [detection_boxes, detection_scores, detection_classes, num_detections],
                         feed_dict={image_tensor: image_np_expanded})
 
-                    # print(num)
-                    # print(classes)
-                    # print(scores)
-                    # print(boxes)
-
-                    # cv2.rectangle(frame, (100 ,150), (200, 250), (255,255,255), thickness=2) # test intersect
-
-                    
-
                     num_detection = int(num[0])
-                    # print(type(num_detection))
                     for i in range(num_detection):
-                        # pass
-                        # classId = int(classes[i])
                         name = category_index[classes[0][i]]['name']
                         score = float(scores[0][i])
                         bbox = [float(v) for v in boxes[0][i]]
@@ -150,24 +103,16 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                             y = int(bbox[0] * rows)
                             right = int(bbox[3] * cols)
                             bottom = int(bbox[2] * rows)
-                            # print([x,y,right,bottom])
-                            area = round((right - x) * (bottom - y) / 1000)
-                            aspect_ratio = round((right - x) / (bottom - y), 2)
-
-
-
+                            # area = round((right - x) * (bottom - y) / 1000)
+                            # aspect_ratio = round((right - x) / (bottom - y), 2)
                             cv2.rectangle(frame, (x, y), (right, bottom), (0, 255, 255), thickness=2)
-                            cv2.putText(frame, name + ' ' + str(round(score * 100)) + '%' , (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-                            cv2.putText(frame,  str(area) + ' / ' + str(aspect_ratio) , (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-                            # if name == 'person' and abs(aspect_ratio - 0.5) < 0.1 and abs(area - 25) < 5:
+                            cv2.putText(frame, name + ' ' + str(round(score * 100)) + '%' , (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                            # cv2.putText(frame,  str(area) + ' / ' + str(aspect_ratio) , (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
                             if name == 'person' :
-                                # print(x,y,right,bottom)
-
-                                # intersect_c = (0, 255, 255)
-                                # not (self.top_right.x < other.bottom_left.x or self.bottom_left.x > other.top_right.x or self.top_right.y < other.bottom_left.y or self.bottom_left.y > other.top_right.y)
                                 center_x = int((x + right) / 2)
                                 center_y = int((y + bottom) / 2)
 
+                                # check if person detection already tracked
                                 intersect_existing_trackeers = False
                                 for j in range(len(trackers)):
                                     (x_t, y_t, w_t, h_t) = trackers[j][2]
@@ -175,59 +120,26 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                                         intersect_existing_trackeers = True
                                         break
 
-                                # def intersects(self, other):
-                                #     return not (self.top_right.x < other.bottom_left.x or self.bottom_left.x > other.top_right.x or self.top_right.y < other.bottom_left.y or self.bottom_left.y > other.top_right.y)
-                                #     return not (self.top_right.x < other.bottom_left.x or self.bottom_left.x > other.top_right.x or self.top_right.y < other.bottom_left.y or self.bottom_left.y > other.top_right.y)
+                                # add new tracker for person
                                 if not intersect_existing_trackeers:
-                                    # print('init tracker')
                                     track_bbox = (x, y, right - x, bottom - y)
-                                    # track_ok = tracker.init(frame, track_bbox)
-                                    # tracker = cv2.TrackerCSRT_create()
                                     tracker = cv2.TrackerKCF_create()
                                     tracker.init(frame, track_bbox)
                                     trackers.append([tracker, tracker_id, [int(v) for v in track_bbox] ])
                                     tracker_id = tracker_id + 1
-                                    # multi_tracker.add( cv2.Tracker_create('KCF'), frame, track_bbox)
-                                    # tracker_initialized = True
 
                 skip_frame = skip_frame + 1
-                # Visualization of the results of a detection.        
-                # counter, csv_line, counting_result = vis_util.visualize_boxes_and_labels_on_image_array_x_axis(cap.get(1),
-                #                                                                                              frame,
-                #                                                                                              is_color_recognition_enabled,
-                #                                                                                              np.squeeze(boxes),
-                #                                                                                              np.squeeze(classes).astype(np.int32),
-                #                                                                                              np.squeeze(scores),
-                #                                                                                              category_index,
-                #                                                                                              x_reference = roi,
-                #                                                                                              deviation = deviation,
-                #                                                                                              use_normalized_coordinates=True,
-                #                                                                                              line_thickness=4)
-                               
-                # # when the object passed over line and counted, make the color of ROI line green
-                # if counter == 1:
-                #   cv2.line(frame, (roi, 0), (roi, height), (0, 0xFF, 0), 5)
-                # else:
-                #   cv2.line(frame, (roi, 0), (roi, height), (0, 0, 0xFF), 5)
-
-                # total_passed_objects = total_passed_objects + counter
-
-                # output_movie.write(frame)
-                # print ("writing frame")
-
+        
                 # insert information text to video frame
                 font = cv2.FONT_HERSHEY_SIMPLEX
                 cv2.putText(frame,'Count: ' + str(total_passed_objects) + ' Track: ' + str(len(trackers)),(10, 30),font, 1.5,(0, 255, 255),2)
 
-                # cv2.putText(frame,'ROI Line',(545, roi-10),font,0.6,(0, 0, 0xFF),2,cv2.LINE_AA,)
-
-                # Calculate Frames per second (FPS)
-                fps = cv2.getTickFrequency() / (cv2.getTickCount() - timer);
-
-                # Display FPS on frame
+                # Calculate and display FPS
                 cv2.putText(frame, "FPS : " + str(int(fps)), (10, 60), font, 0.5, (0, 255, 255), 1);
     
                 cv2.imshow('object counting', cv2.resize(frame, None, None, fx=2, fy=2))
+
+                fps = cv2.getTickFrequency() / (cv2.getTickCount() - timer);
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
