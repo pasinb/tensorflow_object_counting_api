@@ -24,13 +24,14 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
         OBJECT_DETECT_DELAY = 0.5
         OBJECT_DETECT_CONFIDENCE_THRESHOLD = 0.75
         TRACKER_UPDATE_DELAY = 0
+        TRACKER_FAIL_COUNT_THRESHOLD = 20
 
         total_passed_objects = 0
         tracker_id = 1
         trackers = []
         
-        last_detect_tick_count = 0
-        last_tracker_update_tick_count = 0
+        last_detect_tick_count = None
+        last_tracker_update_tick_count = None
 
         fps = 0
 
@@ -65,13 +66,15 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                     break
 
                 # Update tracker
-                if last_tracker_update_tick_count == 0 or (tick_count - last_tracker_update_tick_count) / tick_freq > TRACKER_UPDATE_DELAY:
+                # 0 tracker, 1 tracker_id, 2 last bbox, 3 fail count
+                if last_tracker_update_tick_count == None or (tick_count - last_tracker_update_tick_count) / tick_freq > TRACKER_UPDATE_DELAY:
                     last_tracker_update_tick_count = tick_count
 
-                    for i in reversed(range(len(trackers))):
+                    for i in range(len(trackers)):
                         track_ok, track_bbox = trackers[i][0].update(frame)
                         if track_ok:
                             # Tracking success
+                            trackers[i][3] = 0
                             (prev_x, prev_y, prev_w, prev_h) = trackers[i][2]
                             (x, y, w, h) = [int(v) for v in track_bbox]
                             if abs((x + w/2) - cols/2) < 20 and abs((prev_x + prev_w/2) - cols/2) > 20:
@@ -83,13 +86,18 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                         
                         else:
                             # Tracking failure
-                            trackers.pop(i)
+                            trackers[i][3] = trackers[i][3] + 1
                             
+                # remove failed tracker
+                for i in reversed(range(len(trackers))):
+                    if trackers[i][3] > TRACKER_FAIL_COUNT_THRESHOLD:
+                        trackers.pop(i)
+
                 # render tracker
                 for i in range(len(trackers)):
                     (x, y, w, h) = trackers[i][2]
                     cv2.rectangle(frame, (x, y), (x + w, y + h), (0,255,0), thickness=2)
-                    cv2.putText(frame, str(trackers[i][1]), (int(x + w/2) , int(y + h/2)), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 2)
+                    cv2.putText(frame, str(trackers[i][1]), (int(x + 5) , int(y + 5)), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 2)
 
 
                 rows = frame.shape[0]
@@ -97,7 +105,7 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                 cv2.line(frame, (int(cols/2), 0), (int(cols/2), rows), (0, 0, 255), thickness=2)
 
                 # tensorflow object detection
-                if last_detect_tick_count == 0 or (tick_count - last_detect_tick_count) / tick_freq > OBJECT_DETECT_DELAY:
+                if last_detect_tick_count == None or (tick_count - last_detect_tick_count) / tick_freq > OBJECT_DETECT_DELAY:
                     last_detect_tick_count = tick_count
 
                     # Expand dimensions since the model expects images to have shape: [1, None, None, 3]
@@ -140,7 +148,7 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                                     track_bbox = (x, y, right - x, bottom - y)
                                     tracker = cv2.TrackerKCF_create()
                                     tracker.init(frame, track_bbox)
-                                    trackers.append([tracker, tracker_id, [int(v) for v in track_bbox] ])
+                                    trackers.append([tracker, tracker_id, [int(v) for v in track_bbox], 0 ])
                                     tracker_id = tracker_id + 1
 
                 # show count
