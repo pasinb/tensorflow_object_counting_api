@@ -58,6 +58,8 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
         TRACKER_UPDATE_DELAY = 0
         TRACKER_FAIL_COUNT_THRESHOLD = 20
         POOL_COUNT = multiprocessing.cpu_count() - 1
+        COUNT_RIGHT = True
+        INTERSECT_DELAY = 0.5
 
         total_passed_objects = 0
         vacant_tracker_id = 1
@@ -119,7 +121,7 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                         input_queues[i].put({'type':'update_tracker', 'frame': frame})
 
                     for i in range(len(output_queues)):
-                        # TODO timeout
+                        # TODO timeout?
 
                         # id, bbox, last_bbox, fail_count
                         res = output_queues[i].get()
@@ -132,6 +134,7 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                                         tracker_data_list[key_id]['bbox'] = track_result['updated_bbox']
                                     else: 
                                         tracker_data_list[key_id]['fail_count'] = tracker_data_list[key_id]['fail_count'] + 1
+                                        
                                 else:
                                     raise Exception('Subprocess have tracking ID not tracked by main process')
                         else:
@@ -146,6 +149,9 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                         del tracker_data_list[tracker_id]
 
 
+                # Detect if tracker intersect center of screen
+                    
+
                 # Render tracker
                 for tracker_id, tracker_data in tracker_data_list.items():
                     (x, y, w, h) = tracker_data['bbox']
@@ -153,6 +159,25 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                         color = (0,0,255)
                     else:
                         color = (0,255,0)
+
+                        # detect if track box intersect center of screen
+                        (prev_x, prev_y, prev_w, prev_h) = tracker_data['last_bbox']
+                        center_x = cols/2
+                        intersects_center = center_x > x and center_x < x + w
+                        prev_intersects_center = center_x > prev_x and center_x < prev_x + prev_w
+                        in_intersect_delay = (tick_count - tracker_data['last_intersect_tick_count']) / tick_freq < INTERSECT_DELAY
+                        
+                        if intersects_center:
+                            tracker_data['last_intersect_tick_count'] = tick_count
+                            if not in_intersect_delay and not prev_intersects_center:
+                                if (x + w/2) > (prev_x + prev_w/2):
+                                    total_passed_objects += 1 if COUNT_RIGHT else -1
+                                else:
+                                    total_passed_objects += -1 if COUNT_RIGHT else 1
+                        
+                        if in_intersect_delay:
+                            color = (255,0,0)
+
                     cv2.rectangle(frame, (x, y), (x + w, y + h), color, thickness=2)
                     cv2.putText(frame, str(tracker_id), (int(x + 5) , int(y + 40)), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 2)
     
@@ -224,7 +249,7 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                                             break
 
                                     # add tracking data to main process and subprocess
-                                    tracker_data_list[vacant_tracker_id] = {'bbox': track_bbox, 'last_bbox': None, 'fail_count': 0}
+                                    tracker_data_list[vacant_tracker_id] = {'bbox': track_bbox, 'last_bbox': track_bbox, 'fail_count': 0, 'last_intersect_tick_count': 0}
                                     input_queues[least_busy_process_idx].put({'type': 'create_tracker', 'frame': frame, 'init_bbox': track_bbox, 'id': vacant_tracker_id })
 
                 # show count
