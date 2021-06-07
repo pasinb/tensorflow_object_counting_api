@@ -93,7 +93,8 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
             detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
             num_detections = detection_graph.get_tensor_by_name('num_detections:0')
 
-            cap = cv2.VideoCapture(0)
+            # cap = cv2.VideoCapture(0)
+            cap = cv2.VideoCapture(1)
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 
@@ -262,8 +263,8 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
 
                 fps = tick_freq / (cv2.getTickCount() - tick_count);
 
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
+                if cv2.waitKey(1) & 0xFF == ord('r'):
+                    total_passed_objects = 0
 
             pool.terminate()
             cap.release()
