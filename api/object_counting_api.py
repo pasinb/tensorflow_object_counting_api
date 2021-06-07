@@ -6,10 +6,12 @@
 
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
+import os
 import csv
 import cv2
 import numpy as np
 from utils import visualization_utils as vis_util
+import multiprocessing
 
 (major_ver, minor_ver, subminor_ver) = (cv2.__version__).split('.')
 print("CV version: " + cv2.__version__)
@@ -19,21 +21,151 @@ print("CV version: " + cv2.__version__)
 # rate limit tracker / obj detect 
 # improve intersection
 # improve count detection (2 lines?, tracker in out position)
+# tracker ID
+
+# def init_tracker_worker(queue):
+#     global trackers 
+#     trackers = []
+#     # label = init_label
+#     # tracker = cv2.TrackerKCF_create()
+#     # tracker.init(frame, init_box)
+
+#     # while True:
+#     #     item = queue.get()
+#     #     print(os.getpid(), "got", item)
+
+#         # queue.put(item + item)
+#         # time.sleep(1) # simulate a "long" operation
+#     # track_bbox = (x, y, right - x, bottom - y)
+#     # trackers.append([tracker, tracker_id, [int(v) for v in track_bbox], 0 ])
+#     # tracker_id = tracker_id + 1
+
+#     # pass
+
+# def add_tracker(frame, tracker_id, init_bbox):
+#     # track_bbox = (x, y, right - x, bottom - y)
+#     tracker = cv2.TrackerKCF_create()
+#     tracker.init(frame, init_bbox)
+#     trackers.append({'tracker': tracker, 'id': tracker_id})
+#     # tracker_id = tracker_id + 1
+#     # print(trackers)
+#     # return t + t
+
+# def update_tracker(frame, cols):
+#     tracker_length = len(trackers)
+#     output = {}
+
+#     for i in range(tracker_length):
+#         tracker_id = trackers[i]['id']
+#         output[tracker_id] = {}
+#         track_ok, track_bbox = trackers[i]['tracker'].update(frame)
+#         if track_ok:
+#             # Tracking success
+#             # trackers[i][3] = 0
+#             # (prev_x, prev_y, prev_w, prev_h) = trackers[i][2]
+#             # (x, y, w, h) = [int(v) for v in track_bbox]
+#             output[tracker_id]['updated_bbox'] = [int(v) for v in track_bbox]
+#             # if abs((x + w/2) - cols/2) < 20 and abs((prev_x + prev_w/2) - cols/2) > 20:
+#             #     if (prev_x + prev_w/2) - cols/2 > 0:
+#             #         total_passed_objects  = total_passed_objects + 1
+#             #     else:
+#             #         total_passed_objects  = total_passed_objects - 1
+#             # trackers[i][2] = (x, y, w, h)
+#         else:
+#             # Tracking failure
+#             output[tracker_id]['updated_bbox'] = None
+#             # trackers[i][3] = trackers[i][3] + 1
+
+#     return output
+#     # track_ok, track_bbox = tracker[0].update(frame)
+#     # if track_ok:
+#     #     # Tracking success
+#     #     tracker[3] = 0
+#     #     (prev_x, prev_y, prev_w, prev_h) = tracker[2]
+#     #     (x, y, w, h) = [int(v) for v in track_bbox]
+#     #     tracker[2] = (x, y, w, h)
+#     #     if abs((x + w/2) - cols/2) < 20 and abs((prev_x + prev_w/2) - cols/2) > 20:
+#     #         if (prev_x + prev_w/2) - cols/2 > 0:
+#     #             return 1
+#     #         else:
+#     #             return -1
+#     #     return 0
+#     # else:
+#     #     # Tracking failure
+#     #     tracker[3] = tracker[3] + 1
+#     #     return 0
+
+
+def tracker_process(input_queue, output_queue):
+    trackers = {}
+    while True:
+        data = input_queue.get()
+        # print(os.getpid(), "got", data)
+        if data is not None:
+            if data['type'] == 'create_tracker':
+                tracker = cv2.TrackerKCF_create()
+                tracker.init(data['frame'], data['init_bbox'])
+                trackers[data['id']] = { 'tracker': tracker }
+            # tracker = {}
+            # tracker['tracker'] = 
+            elif data['type'] == 'get_tracker_count':
+                output_queue.put({'tracker_count': len(trackers)})
+            elif data['type'] == 'update_tracker':
+                output = {'type': 'update_tracker', 'data': {}}
+                for tracker_id, tracker in trackers.items():
+                # for i in range(len(trackers)):
+                    # tracker_id = trackers[tracker_id]['id']
+                    output['data'][tracker_id] = {}
+                    track_ok, track_bbox = trackers[tracker_id]['tracker'].update(data['frame'])
+                    if track_ok:
+                        # Tracking success
+                        # trackers[i][3] = 0
+                        # (prev_x, prev_y, prev_w, prev_h) = trackers[i][2]
+                        # (x, y, w, h) = [int(v) for v in track_bbox]
+                        output['data'][tracker_id]['track_ok'] = True
+                        output['data'][tracker_id]['updated_bbox'] = [int(v) for v in track_bbox]
+                    else:
+                        output['data'][tracker_id]['track_ok'] = False
+                output_queue.put(output)
+            elif data['type'] == 'remove_tracker':
+                if data['id'] in trackers:
+                    del trackers[data['id']]
+            else:
+                raise Exception('unknown data from parent process')
 
 def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is_color_recognition_enabled, roi, deviation, custom_object_name):
         OBJECT_DETECT_DELAY = 0.5
-        OBJECT_DETECT_CONFIDENCE_THRESHOLD = 0.75
+        OBJECT_DETECT_CONFIDENCE_THRESHOLD = 0.7
         TRACKER_UPDATE_DELAY = 0
         TRACKER_FAIL_COUNT_THRESHOLD = 20
+        POOL_COUNT = multiprocessing.cpu_count() - 1
 
         total_passed_objects = 0
-        tracker_id = 1
-        trackers = []
-        
+        vacant_tracker_id = 1
+
+        # id (number): {bbox, last bbox, fail_count}
+        tracker_data_list = {}
+
         last_detect_tick_count = None
         last_tracker_update_tick_count = None
 
         fps = 0
+
+        # queue_list = ([multiprocessing.Queue(), ] for x in range(POOL_COUNT))
+        # pool = multiprocessing.Pool(POOL_COUNT, init_tracker_worker, queue_list)
+
+        # queue = multiprocessing.Queue()
+        # pool = multiprocessing.Pool(POOL_COUNT, init_tracker_worker, (queue, ))
+
+        # pool = ProcessPool(4)
+        # processes = []
+
+        input_queues = [multiprocessing.Queue() for x in range(POOL_COUNT) ]
+        output_queues = [multiprocessing.Queue() for x in range(POOL_COUNT) ] 
+        for i in range(POOL_COUNT):
+            p = multiprocessing.Process(target=tracker_process, args=(input_queues[i], output_queues[i], ))
+            p.daemon = True
+            p.start()
 
         with detection_graph.as_default():
           with tf.Session(graph=detection_graph) as sess:
@@ -65,44 +197,101 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                     print("end of the video file...")
                     break
 
-                # Update tracker
-                # 0 tracker, 1 tracker_id, 2 last bbox, 3 fail count
-                if last_tracker_update_tick_count == None or (tick_count - last_tracker_update_tick_count) / tick_freq > TRACKER_UPDATE_DELAY:
-                    last_tracker_update_tick_count = tick_count
-
-                    for i in range(len(trackers)):
-                        track_ok, track_bbox = trackers[i][0].update(frame)
-                        if track_ok:
-                            # Tracking success
-                            trackers[i][3] = 0
-                            (prev_x, prev_y, prev_w, prev_h) = trackers[i][2]
-                            (x, y, w, h) = [int(v) for v in track_bbox]
-                            if abs((x + w/2) - cols/2) < 20 and abs((prev_x + prev_w/2) - cols/2) > 20:
-                                if (prev_x + prev_w/2) - cols/2 > 0:
-                                    total_passed_objects  = total_passed_objects + 1
-                                else:
-                                    total_passed_objects  = total_passed_objects - 1
-                            trackers[i][2] = (x, y, w, h)
-                        
-                        else:
-                            # Tracking failure
-                            trackers[i][3] = trackers[i][3] + 1
-                            
-                # remove failed tracker
-                for i in reversed(range(len(trackers))):
-                    if trackers[i][3] > TRACKER_FAIL_COUNT_THRESHOLD:
-                        trackers.pop(i)
-
-                # render tracker
-                for i in range(len(trackers)):
-                    (x, y, w, h) = trackers[i][2]
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0,255,0), thickness=2)
-                    cv2.putText(frame, str(trackers[i][1]), (int(x + 5) , int(y + 5)), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 2)
-
-
                 rows = frame.shape[0]
                 cols = frame.shape[1]
                 cv2.line(frame, (int(cols/2), 0), (int(cols/2), rows), (0, 0, 255), thickness=2)
+
+                # Update tracker
+                if last_tracker_update_tick_count == None or (tick_count - last_tracker_update_tick_count) / tick_freq > TRACKER_UPDATE_DELAY:
+                    last_tracker_update_tick_count = tick_count
+                    # tracker_length = len(trackers)
+
+                    for i in range(len(input_queues)):
+                        input_queues[i].put({'type':'update_tracker', 'frame': frame})
+
+                    for i in range(len(output_queues)):
+                        # TODO timeout
+
+                        # id, bbox, last_bbox, fail_count
+                        res = output_queues[i].get()
+                        # print(res)
+                        if 'type' in res and res['type'] == 'update_tracker':
+                            for key_id, track_result in res['data'].items():
+                                # print(track_result)
+                                if key_id in tracker_data_list:
+                                    if track_result['track_ok'] is True:
+                                        # print('updating tracker')
+                                        tracker_data_list[key_id]['fail_count'] = 0
+                                        tracker_data_list[key_id]['last_bbox'] = tracker_data_list[key_id]['bbox'] 
+                                        tracker_data_list[key_id]['bbox'] = track_result['updated_bbox']
+                                    else: 
+                                        tracker_data_list[key_id]['fail_count'] = tracker_data_list[key_id]['fail_count'] + 1
+                                else:
+                                    raise Exception('Subprocess have tracking ID not tracked by main process')
+                        else:
+                            raise Exception('Subprocess wrong answer')
+
+                    # print(tracker_data_list)
+                    # queue.put(tick_count)
+                    # print('track')
+                    # results = pool.map(do_track, [1,2,3])
+                    # print('results:' + str(results))
+#
+                    # if (tracker_length > 0):
+                        # pass
+                        # track_result = pool.map(update_tracker, *[[tracker[i], frame, cols] for i in range(tracker_length)]  )
+                        # track_result = Parallel(n_jobs=tracker_length)(delayed(update_tracker)(tracker[i], frame) for i in range(tracker_length))
+                        # print(track_result)
+
+
+                    # for i in range(tracker_length):
+                    #     update_tracker(trackers[i], frame, cols)
+
+                    # processes = []
+                    # for i in range(tracker_length):
+                    #     p = Process(target=update_tracker, args=(trackers[i], frame, cols))
+                    #     processes.append(p)
+                    # for p in processes:
+                    #     p.start()
+                    #     p.join()
+
+
+                    # for i in range(tracker_length):
+                    #     track_ok, track_bbox = trackers[i][0].update(frame)
+                    #     if track_ok:
+                    #         # Tracking success
+                    #         trackers[i][3] = 0
+                    #         (prev_x, prev_y, prev_w, prev_h) = trackers[i][2]
+                    #         (x, y, w, h) = [int(v) for v in track_bbox]
+                    #         if abs((x + w/2) - cols/2) < 20 and abs((prev_x + prev_w/2) - cols/2) > 20:
+                    #             if (prev_x + prev_w/2) - cols/2 > 0:
+                    #                 total_passed_objects  = total_passed_objects + 1
+                    #             else:
+                    #                 total_passed_objects  = total_passed_objects - 1
+                    #         trackers[i][2] = (x, y, w, h)
+                    #     else:
+                    #         # Tracking failure
+                    #         trackers[i][3] = trackers[i][3] + 1
+                            
+                # remove failed tracker
+                for tracker_id in list(tracker_data_list):
+                # for i in reversed(range(len(tracker_data_list))):
+                    if tracker_data_list[tracker_id]['fail_count'] > TRACKER_FAIL_COUNT_THRESHOLD:
+                        for iq in input_queues:
+                            iq.put({'type': 'remove_tracker', 'id': tracker_id})
+                        del tracker_data_list[tracker_id]
+
+
+                # render tracker
+                for tracker_id, tracker_data in tracker_data_list.items():
+                    (x, y, w, h) = tracker_data['bbox']
+                    if tracker_data['fail_count'] > 0:
+                        color = (0,0,255)
+                    else:
+                        color = (0,255,0)
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), color, thickness=2)
+                    cv2.putText(frame, str(tracker_id), (int(x + 5) , int(y + 40)), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 2)
+    
 
                 # tensorflow object detection
                 if last_detect_tick_count == None or (tick_count - last_detect_tick_count) / tick_freq > OBJECT_DETECT_DELAY:
@@ -137,8 +326,9 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
 
                                 # check if person detection already tracked
                                 intersect_existing_trackeers = False
-                                for j in range(len(trackers)):
-                                    (x_t, y_t, w_t, h_t) = trackers[j][2]
+                                for tracker_id, tracker_data in tracker_data_list.items():
+                                # for j in range(len(tracker_data_list)):
+                                    (x_t, y_t, w_t, h_t) = tracker_data['bbox']
                                     if center_x > x_t and center_x < x_t + w_t and center_y > y_t and center_y < y_t + h_t:
                                         intersect_existing_trackeers = True
                                         break
@@ -146,14 +336,48 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                                 # add new tracker for person
                                 if not intersect_existing_trackeers:
                                     track_bbox = (x, y, right - x, bottom - y)
-                                    tracker = cv2.TrackerKCF_create()
-                                    tracker.init(frame, track_bbox)
-                                    trackers.append([tracker, tracker_id, [int(v) for v in track_bbox], 0 ])
-                                    tracker_id = tracker_id + 1
+
+                                    # tracker = cv2.TrackerKCF_create()
+                                    # tracker.init(frame, track_bbox)
+                                    # trackers.append([tracker, tracker_id, [int(v) for v in track_bbox], 0 ])
+
+                                    
+                                    # find least busy process
+                                    for iq in input_queues:
+                                        iq.put({'type': 'get_tracker_count'})
+                                    process_data = []
+                                    for j in range(len(output_queues)):
+                                        d = output_queues[j].get()
+                                        if 'tracker_count' in d:
+                                            process_data.append({'idx': j, 'tracker_count': d['tracker_count']})
+                                        else:
+                                            raise Exception('Subprocess wrong answer')
+                                            # process_data.append({'idx': j, 'tracker_count': float('inf')})
+                                    
+                                    process_data = sorted(process_data, key=lambda k: k['tracker_count']) 
+                                    least_busy_process_idx = process_data[0]['idx']
+                                    
+                                    vacant_tracker_id = 0
+                                    while True:
+                                        if vacant_tracker_id in tracker_data_list:
+                                            vacant_tracker_id += 1
+                                            continue
+                                        else:
+                                            break
+                                    # add tracker to new process
+                                    # id (number): {bbox, last bbox, fail_count}
+                                    tracker_data_list[vacant_tracker_id] = {'bbox': track_bbox, 'last_bbox': None, 'fail_count': 0}
+                                    input_queues[least_busy_process_idx].put({'type': 'create_tracker', 'frame': frame, 'init_bbox': track_bbox, 'id': vacant_tracker_id })
+
+                                    # data['type'] = 'create_tracker'
+                                    # tracker = cv2.TrackerKCF_create()
+                                    # tracker.init(data['frame'], data['init_bbox'])
+                                    # trackers.append({'tracker': tracker, 'id': data['id']})
+
 
                 # show count
                 font = cv2.FONT_HERSHEY_SIMPLEX
-                cv2.putText(frame,'Count: ' + str(total_passed_objects) + ' Track: ' + str(len(trackers)),(10, 40),font, 1.5,(0, 255, 255),2)
+                cv2.putText(frame,'Count: ' + str(total_passed_objects) + ' Track: ' + str(len(tracker_data_list)),(10, 40),font, 1.5,(0, 255, 255),2)
 
                 # Calculate and display FPS
                 cv2.putText(frame, "FPS : " + str(int(fps)), (10, 60), font, 0.5, (0, 255, 255), 1);
@@ -164,485 +388,6 @@ def cumulative_object_counting_x_axis_webcam(detection_graph, category_index, is
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
 
+            pool.terminate()
             cap.release()
             cv2.destroyAllWindows()
-
-def cumulative_object_counting_x_axis(input_video, detection_graph, category_index, is_color_recognition_enabled, roi, deviation, custom_object_name):
-        total_passed_objects = 0              
-
-        # input video
-        cap = cv2.VideoCapture(input_video)
-
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        fps = int(cap.get(cv2.CAP_PROP_FPS))
-
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        output_movie = cv2.VideoWriter('the_output.avi', fourcc, fps, (width, height))
-
-        total_passed_objects = 0
-        color = "waiting..."
-        with detection_graph.as_default():
-          with tf.Session(graph=detection_graph) as sess:
-            # Definite input and output Tensors for detection_graph
-            image_tensor = detection_graph.get_tensor_by_name('image_tensor:0')
-
-            # Each box represents a part of the image where a particular object was detected.
-            detection_boxes = detection_graph.get_tensor_by_name('detection_boxes:0')
-
-            # Each score represent how level of confidence for each of the objects.
-            # Score is shown on the result image, together with the class label.
-            detection_scores = detection_graph.get_tensor_by_name('detection_scores:0')
-            detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
-            num_detections = detection_graph.get_tensor_by_name('num_detections:0')
-
-            # for all the frames that are extracted from input video
-            while(cap.isOpened()):
-                ret, frame = cap.read()                
-
-                if not  ret:
-                    print("end of the video file...")
-                    break
-                
-                input_frame = frame
-
-                # Expand dimensions since the model expects images to have shape: [1, None, None, 3]
-                image_np_expanded = np.expand_dims(input_frame, axis=0)
-
-                # Actual detection.
-                (boxes, scores, classes, num) = sess.run(
-                    [detection_boxes, detection_scores, detection_classes, num_detections],
-                    feed_dict={image_tensor: image_np_expanded})
-
-                # insert information text to video frame
-                font = cv2.FONT_HERSHEY_SIMPLEX
-
-                # Visualization of the results of a detection.        
-                counter, csv_line, counting_result = vis_util.visualize_boxes_and_labels_on_image_array_x_axis(cap.get(1),
-                                                                                                             input_frame,
-                                                                                                             is_color_recognition_enabled,
-                                                                                                             np.squeeze(boxes),
-                                                                                                             np.squeeze(classes).astype(np.int32),
-                                                                                                             np.squeeze(scores),
-                                                                                                             category_index,
-                                                                                                             x_reference = roi,
-                                                                                                             deviation = deviation,
-                                                                                                             use_normalized_coordinates=True,
-                                                                                                             line_thickness=4)
-                               
-                # when the object passed over line and counted, make the color of ROI line green
-                if counter == 1:
-                  cv2.line(input_frame, (roi, 0), (roi, height), (0, 0xFF, 0), 5)
-                else:
-                  cv2.line(input_frame, (roi, 0), (roi, height), (0, 0, 0xFF), 5)
-
-                total_passed_objects = total_passed_objects + counter
-
-                # insert information text to video frame
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                cv2.putText(
-                    input_frame,
-                    'Detected ' + custom_object_name + ': ' + str(total_passed_objects),
-                    (10, 35),
-                    font,
-                    0.8,
-                    (0, 0xFF, 0xFF),
-                    2,
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    )
-
-                cv2.putText(
-                    input_frame,
-                    'ROI Line',
-                    (545, roi-10),
-                    font,
-                    0.6,
-                    (0, 0, 0xFF),
-                    2,
-                    cv2.LINE_AA,
-                    )
-
-                output_movie.write(input_frame)
-                print ("writing frame")
-                #cv2.imshow('object counting',input_frame)
-
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
-
-            cap.release()
-            cv2.destroyAllWindows()
-
-def cumulative_object_counting_y_axis(input_video, detection_graph, category_index, is_color_recognition_enabled, roi, deviation, custom_object_name, targeted_objects=None):
-        total_passed_objects = 0        
-
-        # input video
-        cap = cv2.VideoCapture(input_video)
-
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        fps = int(cap.get(cv2.CAP_PROP_FPS))
-
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        output_movie = cv2.VideoWriter('the_output.avi', fourcc, fps, (width, height))
-
-        total_passed_objects = 0
-        color = "waiting..."
-        with detection_graph.as_default():
-          with tf.Session(graph=detection_graph) as sess:
-            # Definite input and output Tensors for detection_graph
-            image_tensor = detection_graph.get_tensor_by_name('image_tensor:0')
-
-            # Each box represents a part of the image where a particular object was detected.
-            detection_boxes = detection_graph.get_tensor_by_name('detection_boxes:0')
-
-            # Each score represent how level of confidence for each of the objects.
-            # Score is shown on the result image, together with the class label.
-            detection_scores = detection_graph.get_tensor_by_name('detection_scores:0')
-            detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
-            num_detections = detection_graph.get_tensor_by_name('num_detections:0')
-
-            # for all the frames that are extracted from input video
-            while(cap.isOpened()):
-                ret, frame = cap.read()                
-
-                if not  ret:
-                    print("end of the video file...")
-                    break
-                
-                input_frame = frame
-
-                # Expand dimensions since the model expects images to have shape: [1, None, None, 3]
-                image_np_expanded = np.expand_dims(input_frame, axis=0)
-
-                # Actual detection.
-                (boxes, scores, classes, num) = sess.run(
-                    [detection_boxes, detection_scores, detection_classes, num_detections],
-                    feed_dict={image_tensor: image_np_expanded})
-
-                # insert information text to video frame
-                font = cv2.FONT_HERSHEY_SIMPLEX
-
-               # Visualization of the results of a detection.        
-                counter, csv_line, counting_result = vis_util.visualize_boxes_and_labels_on_image_array_y_axis(cap.get(1),
-                                                                                                             input_frame,
-                                                                                                             is_color_recognition_enabled,
-                                                                                                             np.squeeze(boxes),
-                                                                                                             np.squeeze(classes).astype(np.int32),
-                                                                                                             np.squeeze(scores),
-                                                                                                             category_index,
-                                                                                                             targeted_objects = targeted_objects,
-                                                                                                             y_reference = roi,
-                                                                                                             deviation = deviation,
-                                                                                                             use_normalized_coordinates=True,
-                                                                                                             line_thickness=4)
-
-                # when the object passed over line and counted, make the color of ROI line green
-                if counter == 1:                  
-                  cv2.line(input_frame, (0, roi), (width, roi), (0, 0xFF, 0), 5)
-                else:
-                  cv2.line(input_frame, (0, roi), (width, roi), (0, 0, 0xFF), 5)
-                
-                total_passed_objects = total_passed_objects + counter
-
-                # insert information text to video frame
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                cv2.putText(
-                    input_frame,
-                    'Detected ' + custom_object_name + ': ' + str(total_passed_objects),
-                    (10, 35),
-                    font,
-                    0.8,
-                    (0, 0xFF, 0xFF),
-                    2,
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    )               
-                
-                cv2.putText(
-                    input_frame,
-                    'ROI Line',
-                    (545, roi-10),
-                    font,
-                    0.6,
-                    (0, 0, 0xFF),
-                    2,
-                    cv2.LINE_AA,
-                    )
-
-                output_movie.write(input_frame)
-                print ("writing frame")
-                #cv2.imshow('object counting',input_frame)
-
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
-
-            cap.release()
-            cv2.destroyAllWindows()
-
-
-def object_counting(input_video, detection_graph, category_index, is_color_recognition_enabled):
-
-        # input video
-        cap = cv2.VideoCapture(input_video)
-
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        fps = int(cap.get(cv2.CAP_PROP_FPS))
-
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        output_movie = cv2.VideoWriter('the_output.avi', fourcc, fps, (width, height))
-
-        total_passed_objects = 0
-        color = "waiting..."
-        height = 0
-        width = 0
-        with detection_graph.as_default():
-          with tf.Session(graph=detection_graph) as sess:
-            # Definite input and output Tensors for detection_graph
-            image_tensor = detection_graph.get_tensor_by_name('image_tensor:0')
-
-            # Each box represents a part of the image where a particular object was detected.
-            detection_boxes = detection_graph.get_tensor_by_name('detection_boxes:0')
-
-            # Each score represent how level of confidence for each of the objects.
-            # Score is shown on the result image, together with the class label.
-            detection_scores = detection_graph.get_tensor_by_name('detection_scores:0')
-            detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
-            num_detections = detection_graph.get_tensor_by_name('num_detections:0')
-
-            # for all the frames that are extracted from input video
-            while(cap.isOpened()):
-                ret, frame = cap.read()                
-
-                if not  ret:
-                    print("end of the video file...")
-                    break
-                
-                input_frame = frame
-
-                # Expand dimensions since the model expects images to have shape: [1, None, None, 3]
-                image_np_expanded = np.expand_dims(input_frame, axis=0)
-
-                # Actual detection.
-                (boxes, scores, classes, num) = sess.run(
-                    [detection_boxes, detection_scores, detection_classes, num_detections],
-                    feed_dict={image_tensor: image_np_expanded})
-
-                # insert information text to video frame
-                font = cv2.FONT_HERSHEY_SIMPLEX
-
-                # Visualization of the results of a detection.        
-                counter, csv_line, counting_result = vis_util.visualize_boxes_and_labels_on_image_array(cap.get(1),
-                                                                                                      input_frame,
-                                                                                                      is_color_recognition_enabled,
-                                                                                                      np.squeeze(boxes),
-                                                                                                      np.squeeze(classes).astype(np.int32),
-                                                                                                      np.squeeze(scores),
-                                                                                                      category_index,
-                                                                                                      use_normalized_coordinates=True,
-                                                                                                      line_thickness=4)
-                if(len(counting_result) == 0):
-                    cv2.putText(input_frame, "...", (10, 35), font, 0.8, (0,255,255),2,cv2.FONT_HERSHEY_SIMPLEX)                       
-                else:
-                    cv2.putText(input_frame, counting_result, (10, 35), font, 0.8, (0,255,255),2,cv2.FONT_HERSHEY_SIMPLEX)
-                
-                output_movie.write(input_frame)
-                print ("writing frame")
-                #cv2.imshow('object counting',input_frame)
-
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
-
-            cap.release()
-            cv2.destroyAllWindows()
-
-def object_counting_webcam(detection_graph, category_index, is_color_recognition_enabled):
-
-        color = "waiting..."
-        with detection_graph.as_default():
-          with tf.Session(graph=detection_graph) as sess:
-            # Definite input and output Tensors for detection_graph
-            image_tensor = detection_graph.get_tensor_by_name('image_tensor:0')
-
-            # Each box represents a part of the image where a particular object was detected.
-            detection_boxes = detection_graph.get_tensor_by_name('detection_boxes:0')
-
-            # Each score represent how level of confidence for each of the objects.
-            # Score is shown on the result image, together with the class label.
-            detection_scores = detection_graph.get_tensor_by_name('detection_scores:0')
-            detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
-            num_detections = detection_graph.get_tensor_by_name('num_detections:0')
-
-            cap = cv2.VideoCapture(0)
-            (ret, frame) = cap.read()
-
-            # for all the frames that are extracted from input video
-            while True:
-                # Capture frame-by-frame
-                (ret, frame) = cap.read()          
-
-                if not  ret:
-                    print("end of the video file...")
-                    break
-                
-                input_frame = frame
-
-                # Expand dimensions since the model expects images to have shape: [1, None, None, 3]
-                image_np_expanded = np.expand_dims(input_frame, axis=0)
-
-                # Actual detection.
-                (boxes, scores, classes, num) = sess.run(
-                    [detection_boxes, detection_scores, detection_classes, num_detections],
-                    feed_dict={image_tensor: image_np_expanded})
-
-                # insert information text to video frame
-                font = cv2.FONT_HERSHEY_SIMPLEX
-
-                # Visualization of the results of a detection.        
-                counter, csv_line, counting_result = vis_util.visualize_boxes_and_labels_on_image_array(cap.get(1),
-                                                                                                      input_frame,
-                                                                                                      is_color_recognition_enabled,
-                                                                                                      np.squeeze(boxes),
-                                                                                                      np.squeeze(classes).astype(np.int32),
-                                                                                                      np.squeeze(scores),
-                                                                                                      category_index,
-                                                                                                      use_normalized_coordinates=True,
-                                                                                                      line_thickness=4)
-                if(len(counting_result) == 0):
-                    cv2.putText(input_frame, "...", (10, 35), font, 0.8, (0,255,255),2,cv2.FONT_HERSHEY_SIMPLEX)                       
-                else:
-                    cv2.putText(input_frame, counting_result, (10, 35), font, 0.8, (0,255,255),2,cv2.FONT_HERSHEY_SIMPLEX)
-                
-                cv2.imshow('object counting',input_frame)
-
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
-
-            cap.release()
-            cv2.destroyAllWindows()
-
-def targeted_object_counting(input_video, detection_graph, category_index, is_color_recognition_enabled, targeted_object):
-
-        # input video
-        cap = cv2.VideoCapture(input_video)
-
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        fps = int(cap.get(cv2.CAP_PROP_FPS))
-
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        output_movie = cv2.VideoWriter('the_output.avi', fourcc, fps, (width, height))
-
-        total_passed_objects = 0
-        color = "waiting..."
-        the_result = "..."
-        height = 0
-        width = 0
-        with detection_graph.as_default():
-          with tf.Session(graph=detection_graph) as sess:
-            # Definite input and output Tensors for detection_graph
-            image_tensor = detection_graph.get_tensor_by_name('image_tensor:0')
-
-            # Each box represents a part of the image where a particular object was detected.
-            detection_boxes = detection_graph.get_tensor_by_name('detection_boxes:0')
-
-            # Each score represent how level of confidence for each of the objects.
-            # Score is shown on the result image, together with the class label.
-            detection_scores = detection_graph.get_tensor_by_name('detection_scores:0')
-            detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
-            num_detections = detection_graph.get_tensor_by_name('num_detections:0')
-
-            # for all the frames that are extracted from input video
-            while(cap.isOpened()):
-                ret, frame = cap.read()                
-
-                if not  ret:
-                    print("end of the video file...")
-                    break
-                
-                input_frame = frame
-
-                # Expand dimensions since the model expects images to have shape: [1, None, None, 3]
-                image_np_expanded = np.expand_dims(input_frame, axis=0)
-
-                # Actual detection.
-                (boxes, scores, classes, num) = sess.run(
-                    [detection_boxes, detection_scores, detection_classes, num_detections],
-                    feed_dict={image_tensor: image_np_expanded})
-
-                # insert information text to video frame
-                font = cv2.FONT_HERSHEY_SIMPLEX
-
-                # Visualization of the results of a detection.        
-                counter, csv_line, the_result = vis_util.visualize_boxes_and_labels_on_image_array(cap.get(1),
-                                                                                                      input_frame,
-                                                                                                      is_color_recognition_enabled,
-                                                                                                      np.squeeze(boxes),
-                                                                                                      np.squeeze(classes).astype(np.int32),
-                                                                                                      np.squeeze(scores),
-                                                                                                      category_index,
-                                                                                                      targeted_objects=targeted_object,
-                                                                                                      use_normalized_coordinates=True,
-                                                                                                      line_thickness=4)
-                if(len(the_result) == 0):
-                    cv2.putText(input_frame, "...", (10, 35), font, 0.8, (0,255,255),2,cv2.FONT_HERSHEY_SIMPLEX)                       
-                else:
-                    cv2.putText(input_frame, the_result, (10, 35), font, 0.8, (0,255,255),2,cv2.FONT_HERSHEY_SIMPLEX)
-                
-                #cv2.imshow('object counting',input_frame)
-
-                output_movie.write(input_frame)
-                print ("writing frame")
-
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
-
-            cap.release()
-            cv2.destroyAllWindows()
-
-def single_image_object_counting(input_video, detection_graph, category_index, is_color_recognition_enabled):     
-        color = "waiting..."
-        with detection_graph.as_default():
-          with tf.Session(graph=detection_graph) as sess:
-            # Definite input and output Tensors for detection_graph
-            image_tensor = detection_graph.get_tensor_by_name('image_tensor:0')
-
-            # Each box represents a part of the image where a particular object was detected.
-            detection_boxes = detection_graph.get_tensor_by_name('detection_boxes:0')
-
-            # Each score represent how level of confidence for each of the objects.
-            # Score is shown on the result image, together with the class label.
-            detection_scores = detection_graph.get_tensor_by_name('detection_scores:0')
-            detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
-            num_detections = detection_graph.get_tensor_by_name('num_detections:0')                   
-
-        input_frame = cv2.imread(input_video)
-
-        # Expand dimensions since the model expects images to have shape: [1, None, None, 3]
-        image_np_expanded = np.expand_dims(input_frame, axis=0)
-
-        # Actual detection.
-        (boxes, scores, classes, num) = sess.run(
-            [detection_boxes, detection_scores, detection_classes, num_detections],
-            feed_dict={image_tensor: image_np_expanded})
-
-        # insert information text to video frame
-        font = cv2.FONT_HERSHEY_SIMPLEX
-
-        # Visualization of the results of a detection.        
-        counter, csv_line, counting_result = vis_util.visualize_boxes_and_labels_on_single_image_array(1,input_frame,
-                                                                                              is_color_recognition_enabled,
-                                                                                              np.squeeze(boxes),
-                                                                                              np.squeeze(classes).astype(np.int32),
-                                                                                              np.squeeze(scores),
-                                                                                              category_index,
-                                                                                              use_normalized_coordinates=True,
-                                                                                              line_thickness=4)
-        if(len(counting_result) == 0):
-            cv2.putText(input_frame, "...", (10, 35), font, 0.8, (0,255,255),2,cv2.FONT_HERSHEY_SIMPLEX)                       
-        else:
-            cv2.putText(input_frame, counting_result, (10, 35), font, 0.8, (0,255,255),2,cv2.FONT_HERSHEY_SIMPLEX)
-        
-        cv2.imshow('tensorflow_object counting_api',input_frame)        
-        cv2.waitKey(0)
-
-        return counting_result
