@@ -1,6 +1,5 @@
 import glob, os, tarfile, urllib
-import tensorflow.compat.v1 as tf
-tf.disable_v2_behavior()
+import tensorflow as tf
 from utils import label_map_util
 
 def set_model(model_name, label_name):
@@ -16,7 +15,7 @@ def set_model(model_name, label_name):
 	download_base = 'http://download.tensorflow.org/models/object_detection/'
 
 	# Path to frozen detection graph. This is the actual model that is used for the object detection.
-	path_to_ckpt = model_name + '/frozen_inference_graph.pb'
+	path_to_ckpt = model_name + '/model.tflite'
 
 	# List of the strings that is used to add correct label for each box.
 	path_to_labels = os.path.join('data', label_name)
@@ -36,8 +35,8 @@ def set_model(model_name, label_name):
 	# Load a (frozen) Tensorflow model into memory.
 	detection_graph = tf.Graph()
 	with detection_graph.as_default():
-	  od_graph_def = tf.GraphDef()
-	  with tf.gfile.GFile(path_to_ckpt, 'rb') as fid:
+	  od_graph_def = tf.compat.v1.GraphDef()
+	  with tf.compat.v2.io.gfile.GFile(path_to_ckpt, 'rb') as fid:
 	    serialized_graph = fid.read()
 	    od_graph_def.ParseFromString(serialized_graph)
 	    tf.import_graph_def(od_graph_def, name='')

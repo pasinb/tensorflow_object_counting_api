@@ -335,3 +335,11 @@ Ahmet Özlü
 
 ## License
 This system is available under the MIT license. See the LICENSE file for more info.
+
+## TODO properly document setup
+install https://github.com/protocolbuffers/protobuf/blob/master/src/README.md
+
+clone tensorflow models repo and add repo folder to PYTHONPATH
+(example in ~/.bashrc) `export PYTHONPATH="$PYTHONPATH:/path-to-repo-folder/models/research"`
+
+run `protoc object_detection/protos/*.proto --python_out=.` in models/research
