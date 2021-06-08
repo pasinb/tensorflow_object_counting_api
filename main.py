@@ -92,7 +92,7 @@ def cumulative_object_counting_x_axis_webcam():
         #     detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
         #     num_detections = detection_graph.get_tensor_by_name('num_detections:0')
 
-        category_index = label_map_util.create_category_index_from_labelmap('./centernet_mobilenetv2_fpn_od/mscoco_label_map.pbtxt.txt',  use_display_name=True)
+        category_index = label_map_util.create_category_index_from_labelmap('./ssd_mobilenet_v2_320x320_coco17_tpu-8/mscoco_label_map.pbtxt.txt',  use_display_name=True)
         detect_fn = tf.saved_model.load('./ssd_mobilenet_v2_320x320_coco17_tpu-8/saved_model')
 
         cap = cv2.VideoCapture(0)
